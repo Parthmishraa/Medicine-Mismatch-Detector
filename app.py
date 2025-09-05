@@ -1,0 +1,168 @@
+
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# Streamlit Config
+# -----------------------------
+st.set_page_config(page_title="💊 Medicine Mismatch Detector", layout="wide")
+st.title("💊 Medicine Mismatch Detector Dashboard")
+
+st.markdown("""
+Upload your *medicine dataset* below to analyze:
+- ✅ Matches vs ❌ Mismatches (tables + summary)
+- 📊 Interactive Bar & Line charts
+- 🩺 Disease-wise analysis
+- 🔎 Filtering by Disease & Status
+""")
+
+# -----------------------------
+# Disease Mapping Dictionary
+# -----------------------------
+DISEASE_MAP = {
+    "infection": ["amox", "cillin", "azithro", "clavulanic", "cipro", "doxy"],
+    "cough/cold": ["syrup", "cough", "ambroxol", "levo", "asthalin"],
+    "allergy": ["fexo", "allegra", "avil", "allerg", "cetirizine", "loratadine"],
+    "pain/fever": ["pain", "para", "ibuprofen", "fever", "naproxen"],
+    "diabetes": ["metformin", "gliclazide", "glimepiride", "insulin"],
+    "hypertension": ["amlodipine", "atenolol", "losartan", "telmisartan"],
+    "cardiac": ["statin", "atorvastatin", "rosuvastatin", "aspirin"],
+}
+
+def map_disease(text):
+    text = str(text).lower()
+    for disease, keywords in DISEASE_MAP.items():
+        if any(keyword in text for keyword in keywords):
+            return disease.capitalize()
+    return "Other/Unknown"
+
+# -----------------------------
+# Cached Data Loader
+# -----------------------------
+@st.cache_data
+def load_data(file):
+    if file.name.endswith(".csv"):
+        return pd.read_csv(file)
+    else:
+        return pd.read_excel(file)
+
+# -----------------------------
+# File Upload
+# -----------------------------
+uploaded_file = st.file_uploader("📂 Upload your medicine dataset (CSV/Excel)", type=["csv", "xlsx"])
+
+if uploaded_file is not None:
+    # Load dataset with caching
+    df = load_data(uploaded_file)
+
+    st.subheader("📄 Dataset Preview")
+    st.dataframe(df.head(50))   # सिर्फ़ 50 rows show
+
+    # Optional full dataset view
+    if st.checkbox("Show full dataset"):
+        st.dataframe(df)
+
+    # -----------------------------
+    # Auto-map dataset if columns differ
+    # -----------------------------
+    if {"Medicine1", "Medicine2", "Status", "Disease"}.issubset(df.columns):
+        pass  # already in correct format
+
+    elif {"name", "short_composition1", "short_composition2"}.issubset(df.columns):
+        st.warning("⚠ Converting dataset automatically into required format...")
+
+        new_data = []
+        for i, row in df.iterrows():
+            med1 = row["name"]
+            med2 = row["short_composition2"] if pd.notna(row["short_composition2"]) else "None"
+            status = "Match" if med2 != "None" else "Mismatch"
+
+            # Disease auto-mapping using medicine name + compositions
+            combined_text = f"{row['name']} {row['short_composition1']} {row['short_composition2']}"
+            disease = map_disease(combined_text)
+
+            new_data.append([med1, med2, status, disease])
+
+        df = pd.DataFrame(new_data, columns=["Medicine1", "Medicine2", "Status", "Disease"])
+
+    else:
+        st.error("⚠ Dataset must contain either [Medicine1, Medicine2, Status, Disease] OR [name, short_composition1, short_composition2]")
+        st.stop()
+
+    # -----------------------------
+    # 🔎 Filtering Options
+    # -----------------------------
+    st.sidebar.header("🔎 Filters")
+
+    # Filter by Disease
+    selected_disease = st.sidebar.selectbox("Filter by Disease", ["All"] + df["Disease"].unique().tolist())
+    if selected_disease != "All":
+        df = df[df["Disease"] == selected_disease]
+
+    # Filter by Status
+    status_filter = st.sidebar.radio("Filter by Status", ["All", "Match", "Mismatch"])
+    if status_filter != "All":
+        df = df[df["Status"] == status_filter]
+
+    # -----------------------------
+    # ✅ Match vs ❌ Mismatch Tables
+    # -----------------------------
+    st.subheader("🔎 Match vs Mismatch Medicines (Tables)")
+
+    matched = df[df["Status"] == "Match"]
+    mismatched = df[df["Status"] == "Mismatch"]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.success("✅ Matched Medicines")
+        st.dataframe(matched.head(50))  # सिर्फ़ 50 rows preview
+
+    with col2:
+        st.error("❌ Mismatched Medicines")
+        st.dataframe(mismatched.head(50))
+
+    # -----------------------------
+    # 📊 Summary Counts
+    # -----------------------------
+    st.subheader("📊 Match vs Mismatch Summary")
+    status_count = df["Status"].value_counts()
+    st.write(f"Total Records: {len(df)}")
+    st.write(f"✅ Matches: {status_count.get('Match',0)} | ❌ Mismatches: {status_count.get('Mismatch',0)}")
+
+    # -----------------------------
+    # 📊 Bar Chart (Sample for performance)
+    # -----------------------------
+    st.subheader("📊 Match vs Mismatch (Bar Chart)")
+    sample_df = df.sample(5000) if len(df) > 5000 else df
+    status_count = sample_df["Status"].value_counts()
+    fig, ax = plt.subplots()
+    status_count.plot(kind="bar", ax=ax, color=["green", "red"])
+    ax.set_ylabel("Count")
+    ax.set_title("Match vs Mismatch Medicines")
+    st.pyplot(fig)
+
+    # -----------------------------
+    # 📈 Line Chart (Trend)
+    # -----------------------------
+    st.subheader("📈 Match vs Mismatch Trend")
+    sample_df["StatusNumeric"] = sample_df["Status"].apply(lambda x: 1 if x == "Match" else 0)
+    st.line_chart(sample_df["StatusNumeric"])
+
+    # -----------------------------
+    # 🩺 Disease Analysis
+    # -----------------------------
+    st.subheader("🩺 Disease-wise Medicine Analysis")
+    disease_count = sample_df["Disease"].value_counts()
+    fig2, ax2 = plt.subplots()
+    disease_count.plot(kind="bar", ax=ax2, color="skyblue")
+    ax2.set_ylabel("Count")
+    ax2.set_title("Diseases Covered by Dataset (Sampled)")
+    st.pyplot(fig2)
+
+    # -----------------------------
+    # 📊 Filtered Dataset
+    # -----------------------------
+    st.subheader("📊 Filtered Dataset (After Applying Filters)")
+    st.dataframe(df.head(100))  # सिर्फ़ 100 rows show
